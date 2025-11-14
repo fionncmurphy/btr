@@ -91,9 +91,9 @@ else
 @code {
     // ---------- CONFIG ----------
     private const string WorkerBase = "https://blue-disk-457f.fionncmurphy.workers.dev/api/bt4u";
-    private const int MaxTrips = 100;
-    private const int MaxParallel = 6;
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(8);
+    private const int MaxTrips = 50;
+    private const int MaxParallel = 10;
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
     private static readonly string ServiceDateIso = DateTime.Today.ToString("yyyy-MM-dd");
 
     // ---------- MODEL ----------

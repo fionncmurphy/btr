@@ -1,0 +1,763 @@
+﻿@page "/planner"
+@using MudBlazor
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Xml.Linq
+@using Microsoft.JSInterop
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+<PageTitle>Trip Planner</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
+    <MudPaper Class="pa-4">
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.h5">Plan a trip</MudText>
+
+            <MudStack Direction="Row" Spacing="2" AlignItems="AlignItems.Center">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="UseMyLocation" Disabled="@_busy">
+                    @(_busy ? "Locating..." : "Use my location")
+                </MudButton>
+                <MudText Color="Color.Secondary">@_status</MudText>
+            </MudStack>
+
+            <MudStack Spacing="2" Class="mt-2">
+                <!-- ORIGIN -->
+                <MudAutocomplete T="StopOption"
+                                 Label="Origin stop"
+                                 Value="_origin"
+                                 ValueChanged="OnOriginChanged"
+                                 ToStringFunc="@(s => s is null ? string.Empty : $"{s.Name} ({s.Code})")"
+                                 SearchFunc="@(SearchStops)"
+                                 Clearable="true"
+                                 Adornment="Adornment.Start"
+                                 AdornmentIcon="@Icons.Material.Filled.RadioButtonChecked"
+                                 Dense="true" />
+
+                <!-- ROUTES ORIGIN -->
+                @if (_originRoutesLoading)
+                {
+                    <MudStack Class="mt-2" AlignItems="AlignItems.Start">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                        <MudText Color="Color.Secondary">Loading routes that pick up at @_origin?.Code…</MudText>
+                    </MudStack>
+                }
+                else if (_originRoutes.Count > 0)
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-2">Routes picking up at @_origin?.Code</MudText>
+                    <MudDataGrid T="OriginRouteRow" Items="_originRoutes" Dense="true" Hover="true" Bordered="true" Striped="true">
+                        <Columns>
+                            <PropertyColumn T="OriginRouteRow" TProperty="string" Title="Route" Property="@(r => r.Route)" />
+                            <PropertyColumn T="OriginRouteRow" TProperty="string" Title="Next pickup" Property="@(r => r.NextDisplay)" />
+                        </Columns>
+                        <PagerContent>
+                            <MudDataGridPager PageSizeOptions="new int[] { 5, 10 }" />
+                        </PagerContent>
+                    </MudDataGrid>
+                }
+                else if (_origin is not null)
+                {
+                    <MudAlert Severity="Severity.Info" Class="mt-2">
+                        No upcoming pickups found at <b>@_origin.Code</b> right now.
+                    </MudAlert>
+                }
+
+                <!-- DESTINATION DROPDOWN (AFTER ROUTES GRID) -->
+                <MudAutocomplete T="StopOption"
+                                 Class="mt-4"
+                                 Label="Where would you like to go?"
+                                 Value="_destination"
+                                 ValueChanged="OnDestinationChanged"
+                                 ToStringFunc="@(s => s is null ? string.Empty : $"{s.Name} ({s.Code})")"
+                                 SearchFunc="@(SearchDestStops)"
+                                 Disabled="@(_origin is null || _loadingDestinations)"
+                                 Clearable="true"
+                                 Adornment="Adornment.Start"
+                                 AdornmentIcon="@Icons.Material.Filled.FlagCircle"
+                                 Dense="true" />
+                @if (_loadingDestinations)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Gathering reachable stops…</MudText>
+                }
+
+                <!-- TRIPS GRID (AFTER DESTINATION CHOSEN) -->
+                @if (_tripRowsLoading)
+                {
+                    <MudStack Class="mt-2" AlignItems="AlignItems.Start">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                        <MudText Color="Color.Secondary">Finding trips from @_origin?.Code to @_destination?.Code…</MudText>
+                    </MudStack>
+                }
+                else if (_destination is not null && _tripRows.Count > 0)
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-2">
+                        Upcoming trips from @_origin?.Code to @_destination?.Code
+                    </MudText>
+                    <MudDataGrid T="TripRow" Items="_tripRows" Dense="true" Hover="true" Bordered="true" Striped="true" ReadOnly="true">
+                        <Columns>
+                            <PropertyColumn T="TripRow" TProperty="string" Title="Route" Property="@(r => r.Route)" />
+                            <PropertyColumn T="TripRow" TProperty="string" Title="Origin" Property="@(r => r.OriginDisplay)" />
+                            <PropertyColumn T="TripRow" TProperty="string" Title="Pickup" Property="@(r => r.DepartDisplay)" />
+                            <PropertyColumn T="TripRow" TProperty="string" Title="Destination" Property="@(r => r.DestDisplay)" />
+                            <PropertyColumn T="TripRow" TProperty="string" Title="Arrival" Property="@(r => r.ArriveDisplay)" />
+                        </Columns>
+                        <PagerContent>
+                            <MudDataGridPager PageSizeOptions="new int[] { 5, 10 }" />
+                        </PagerContent>
+                    </MudDataGrid>
+                }
+                else if (_destination is not null)
+                {
+                    <MudAlert Severity="Severity.Info" Class="mt-2">
+                        No matching trips from <b>@_origin?.Code</b> to <b>@_destination?.Code</b> soon.
+                    </MudAlert>
+                }
+            </MudStack>
+
+            @if (_loading)
+            {
+                <MudStack AlignItems="AlignItems.Center" JustifyContent="Justify.Center" Style="min-height:12vh;">
+                    <MudProgressCircular Indeterminate="true" />
+                </MudStack>
+            }
+        </MudStack>
+    </MudPaper>
+</MudContainer>
+
+@code {
+    // ---------- CONFIG ----------
+    private const string WorkerBase = "https://blue-disk-457f.fionncmurphy.workers.dev/api/bt4u";
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
+    private static readonly string ServiceDateIso = DateTime.Today.ToString("yyyy-MM-dd");
+    private const int TripsProbePerRoute = 12;  // inspect this many upcoming trips per route for downstream stops / matching
+
+    // ---------- MODELS ----------
+    private sealed record StopOption(string Code, string Name, double DistanceMeters);
+
+    private sealed record OriginRouteRow(string Route, DateTime? Next)
+    {
+        public string NextDisplay => Next.HasValue ? Next.Value.ToString("h:mm tt") : "—";
+    }
+
+    private sealed record TripStop(string StopCode,
+                                   DateTime? SchedArr, DateTime? SchedDep,
+                                   DateTime? CalcArr,  DateTime? CalcDep);
+
+    private sealed record RouteTrip(string RouteShortName, List<TripStop> Stops);
+
+    private sealed record TripRow(string Route, string OriginCode, string OriginName, DateTime Depart,
+                                  string DestCode, string DestName, DateTime Arrive)
+    {
+        public string OriginDisplay => $"{OriginName} ({OriginCode})";
+        public string DestDisplay   => $"{DestName} ({DestCode})";
+        public string DepartDisplay => Depart.ToString("h:mm tt");
+        public string ArriveDisplay => Arrive.ToString("h:mm tt");
+    }
+
+    // ---------- STATE ----------
+    private bool _busy, _loading;
+    private string _status = "";
+    private readonly List<StopOption> _knownStops = new(); // from geolocated nearby
+    private StopOption? _origin;
+
+    private readonly List<OriginRouteRow> _originRoutes = new();
+    private bool _originRoutesLoading;
+
+    private readonly List<StopOption> _destOptions = new();
+    private bool _loadingDestinations;
+    private StopOption? _destination;
+
+    private readonly List<TripRow> _tripRows = new();
+    private bool _tripRowsLoading;
+
+    // stop name cache
+    private readonly Dictionary<string, string> _stopNameCache = new(StringComparer.OrdinalIgnoreCase);
+
+    // ---------- GEO ----------
+    private async Task UseMyLocation()
+    {
+        _busy = true; _status = "Requesting permission…"; StateHasChanged();
+        try
+        {
+            var mod = await JS.InvokeAsync<IJSObjectReference>("import", "./js/geo.js");
+            var pos = await mod.InvokeAsync<GeoPosition>("getPosition", new { enableHighAccuracy = true, timeout = 10000, maximumAge = 0 });
+            _status = $"Location ok (±{pos.accuracy?.ToString("0")} m). Finding nearby stops…";
+            await LoadNearestStops(pos.lat, pos.lon, 50);
+            if (_knownStops.Count > 0)
+            {
+                _origin = _knownStops[0]; // closest
+                await RefreshOriginRoutesAsync(); // this also builds destination list
+            }
+        }
+        catch (Exception ex) { _status = "Location failed."; Console.Error.WriteLine(ex); }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task LoadNearestStops(double lat, double lon, int noOfStops)
+    {
+        _loading = true; StateHasChanged();
+        try
+        {
+            using var cts = new CancellationTokenSource(RequestTimeout);
+            var url = $"{WorkerBase}?method=GetNearestStops" +
+                      $"&latitude={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
+                      $"&longitude={lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
+                      $"&noOfStops={noOfStops}" +
+                      $"&serviceDate={ServiceDateIso}";
+            var root = await Http.GetFromJsonAsync<JsonElement>(url, cts.Token);
+            var rows = ParseNearestStops(root);
+            _knownStops.Clear();
+            _knownStops.AddRange(rows.OrderBy(s => s.DistanceMeters));
+            foreach (var s in _knownStops) _stopNameCache[s.Code] = s.Name;
+            _status = $"Found {_knownStops.Count} nearby stops.";
+        }
+        catch { _status = "Failed to fetch nearest stops."; }
+        finally { _loading = false; }
+    }
+
+    // ---------- UI EVENTS ----------
+    private async Task OnOriginChanged(StopOption? s)
+    {
+        _origin = s;
+        _destination = null;
+        _tripRows.Clear();
+        await RefreshOriginRoutesAsync();
+    }
+
+    private async Task OnDestinationChanged(StopOption? s)
+    {
+        _destination = s;
+        _tripRows.Clear();
+
+        if (_origin is null || _destination is null) { StateHasChanged(); return; }
+
+        _tripRowsLoading = true; StateHasChanged();
+
+        try
+        {
+            using var cts = new CancellationTokenSource(RequestTimeout);
+
+            // Check routes that pick up at origin; for each, scan trips and keep those that also stop at destination after origin
+            var routesAtOrigin = await GetRoutesServingStop(_origin.Code, cts.Token);
+
+            var tasks = routesAtOrigin.Select(async route =>
+            {
+                try
+                {
+                    var trips = await GetArrivalAndDepartureTimesForRoutes(route, TripsProbePerRoute, cts.Token);
+                    var now = DateTime.Now;
+
+                    foreach (var t in trips)
+                    {
+                        var idxO = t.Stops.FindIndex(s => s.StopCode.Equals(_origin.Code, StringComparison.OrdinalIgnoreCase));
+                        if (idxO < 0) continue;
+
+                        var idxD = t.Stops.FindIndex(idxO + 1, s => s.StopCode.Equals(_destination.Code, StringComparison.OrdinalIgnoreCase));
+                        if (idxD < 0) continue;
+
+                        var o = t.Stops[idxO];
+                        var d = t.Stops[idxD];
+
+                        var oDep = o.CalcDep ?? o.SchedDep ?? o.CalcArr ?? o.SchedArr;
+                        var dArr = d.CalcArr ?? d.SchedArr ?? d.CalcDep ?? d.SchedDep;
+                        if (!oDep.HasValue || !dArr.HasValue) continue;
+                        if (dArr <= oDep || oDep < now) continue;
+
+                        var originName = await ResolveStopNameAsync(_origin.Code, cts.Token) ?? _origin.Name;
+                        var destName   = await ResolveStopNameAsync(_destination.Code, cts.Token) ?? _destination.Name;
+
+                        lock (_tripRows)
+                        {
+                            _tripRows.Add(new TripRow(
+                                route,
+                                _origin.Code, originName,
+                                oDep.Value,
+                                _destination.Code, destName,
+                                dArr.Value));
+                        }
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"Trip matching failed for {route}: {ex.Message}"); }
+            });
+
+            await Task.WhenAll(tasks);
+
+            _tripRows.Sort((a, b) => a.Depart.CompareTo(b.Depart));
+        }
+        finally
+        {
+            _tripRowsLoading = false; StateHasChanged();
+        }
+    }
+
+    // Build: routes at origin + union of downstream stops (dest options)
+    private async Task RefreshOriginRoutesAsync()
+    {
+        _originRoutes.Clear();
+        _destOptions.Clear();
+        _tripRows.Clear();
+
+        if (_origin is null) { StateHasChanged(); return; }
+
+        _originRoutesLoading = true;
+        _loadingDestinations = true; StateHasChanged();
+
+        try
+        {
+            using var cts = new CancellationTokenSource(RequestTimeout);
+
+            // 1) Routes that serve the origin
+            var routesAtOrigin = await GetRoutesServingStop(_origin.Code, cts.Token);
+
+            // 2) Next pickup per route (for display)
+            var nextTasks = routesAtOrigin.Select(async r =>
+            {
+                try
+                {
+                    var times = await GetNextDeparturesForStop(r, _origin.Code, 1, cts.Token);
+                    var next = times.FirstOrDefault();
+                    if (next != default && next >= DateTime.Now)
+                    {
+                        lock (_originRoutes) _originRoutes.Add(new OriginRouteRow(r, next));
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"NextDepartures failed for {r}@{_origin.Code}: {ex.Message}"); }
+            });
+
+            // 3) Discover downstream stops across those routes
+            var destCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var tripTasks = routesAtOrigin.Select(async r =>
+            {
+                try
+                {
+                    var trips = await GetArrivalAndDepartureTimesForRoutes(r, TripsProbePerRoute, cts.Token);
+                    foreach (var t in trips)
+                    {
+                        var oi = t.Stops.FindIndex(s => s.StopCode.Equals(_origin.Code, StringComparison.OrdinalIgnoreCase));
+                        if (oi < 0) continue;
+                        for (int i = oi + 1; i < t.Stops.Count; i++)
+                        {
+                            var code = t.Stops[i].StopCode;
+                            if (!string.IsNullOrWhiteSpace(code)) destCodes.Add(code);
+                        }
+                    }
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"Trips probe failed for {r}: {ex.Message}"); }
+            });
+
+            await Task.WhenAll(nextTasks.Concat(tripTasks));
+
+            // Resolve names for destination codes
+            var nameTasks = destCodes.Select(async code =>
+            {
+                var name = await ResolveStopNameAsync(code, cts.Token) ?? $"Stop {code}";
+                lock (_destOptions) _destOptions.Add(new StopOption(code, name, double.NaN));
+            });
+            await Task.WhenAll(nameTasks);
+
+            // Sort outputs
+            _originRoutes.Sort((a, b) =>
+            {
+                var t = Nullable.Compare(a.Next, b.Next);
+                return t != 0 ? t : string.Compare(a.Route, b.Route, StringComparison.OrdinalIgnoreCase);
+            });
+
+            _destOptions.Sort((a, b) =>
+            {
+                var byName = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                return byName != 0 ? byName : string.Compare(a.Code, b.Code, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+        finally
+        {
+            _originRoutesLoading = false;
+            _loadingDestinations = false; StateHasChanged();
+        }
+    }
+
+    // ---------- AUTOCOMPLETE SEARCHERS ----------
+    private Task<IEnumerable<StopOption>> SearchStops(string value, CancellationToken _)
+    {
+        IEnumerable<StopOption> result =
+            string.IsNullOrWhiteSpace(value)
+            ? _knownStops
+            : _knownStops.Where(s =>
+                (s.Name?.Contains(value, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (s.Code?.Contains(value, StringComparison.OrdinalIgnoreCase) ?? false));
+
+        return Task.FromResult(result);
+    }
+
+    private Task<IEnumerable<StopOption>> SearchDestStops(string value, CancellationToken _)
+    {
+        IEnumerable<StopOption> result =
+            string.IsNullOrWhiteSpace(value)
+            ? _destOptions
+            : _destOptions.Where(s =>
+                (s.Name?.Contains(value, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (s.Code?.Contains(value, StringComparison.OrdinalIgnoreCase) ?? false));
+
+        return Task.FromResult(result);
+    }
+
+    // ---------- API CALLS ----------
+    private async Task<List<string>> GetRoutesServingStop(string stopCode, CancellationToken token)
+    {
+        var url = $"{WorkerBase}?method=GetScheduledRoutes&stopCode={Uri.EscapeDataString(stopCode)}&serviceDate={ServiceDateIso}";
+        var root = await Http.GetFromJsonAsync<JsonElement>(url, token);
+        return ParseScheduledRoutes(root);
+    }
+
+    private async Task<List<DateTime>> GetNextDeparturesForStop(string routeShortName, string stopCode, int noOfTrips, CancellationToken token)
+    {
+        var url = $"{WorkerBase}?method=GetNextDeparturesForStop" +
+                  $"&routeShortName={Uri.EscapeDataString(routeShortName)}" +
+                  $"&noOfTrips={noOfTrips}" +
+                  $"&stopCode={Uri.EscapeDataString(stopCode)}";
+
+        var root = await Http.GetFromJsonAsync<JsonElement>(url, token);
+        return ParseNextDeparturesTimes(root);
+    }
+
+    private async Task<List<RouteTrip>> GetArrivalAndDepartureTimesForRoutes(string routeShortName, int noOfTrips, CancellationToken token)
+    {
+        var url = $"{WorkerBase}?method=GetArrivalAndDepartureTimesForRoutes" +
+                  $"&routeShortNames={Uri.EscapeDataString(routeShortName)}" +
+                  $"&noOfTrips={noOfTrips}" +
+                  $"&serviceDate={ServiceDateIso}";
+
+        var root = await Http.GetFromJsonAsync<JsonElement>(url, token);
+        return ParseRouteTrips(root, routeShortName);
+    }
+
+    private async Task<string?> ResolveStopNameAsync(string code, CancellationToken token)
+    {
+        if (_stopNameCache.TryGetValue(code, out var cached)) return cached;
+
+        try
+        {
+            var url = $"{WorkerBase}?method=GetScheduledStopInfo&stopCode={Uri.EscapeDataString(code)}&serviceDate={ServiceDateIso}";
+            var root = await Http.GetFromJsonAsync<JsonElement>(url, token);
+            var name = ParseStopNameFromScheduledStopInfo(root);
+            if (!string.IsNullOrWhiteSpace(name)) _stopNameCache[code] = name!;
+            return name;
+        }
+        catch { return null; }
+    }
+
+    // ---------- PARSERS ----------
+    private static List<StopOption> ParseNearestStops(JsonElement root)
+    {
+        var list = new List<StopOption>();
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in root.EnumerateArray())
+            {
+                string code = "", name = "";
+                double dist = double.PositiveInfinity;
+                foreach (var p in row.EnumerateObject())
+                {
+                    if (p.Value.ValueKind == JsonValueKind.String)
+                    {
+                        if (p.Name.Equals("StopCode", StringComparison.OrdinalIgnoreCase) || p.Name.Equals("Code", StringComparison.OrdinalIgnoreCase))
+                            code = p.Value.GetString() ?? "";
+                        else if (p.Name.Contains("Name", StringComparison.OrdinalIgnoreCase))
+                            name = p.Value.GetString() ?? "";
+                    }
+                    else if (p.Value.ValueKind == JsonValueKind.Number && p.Name.Contains("Distance", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (p.Value.TryGetDouble(out var d)) dist = d;
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(code) || !string.IsNullOrWhiteSpace(name))
+                    list.Add(new StopOption(code, name, dist));
+            }
+            return list;
+        }
+
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("xml", out var xmlNode))
+        {
+            var xml = xmlNode.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(xml))
+            {
+                var x = XDocument.Parse(xml);
+                foreach (var n in x.Descendants())
+                {
+                    var code = n.Element("StopCode")?.Value?.Trim() ?? n.Element("Code")?.Value?.Trim();
+                    var name = n.Element("StopName")?.Value?.Trim()
+                             ?? n.Element("Name")?.Value?.Trim()
+                             ?? n.Element("Description")?.Value?.Trim() ?? "";
+                    double dist = double.PositiveInfinity;
+                    var dstr = n.Element("Distance")?.Value?.Trim() ?? n.Element("DistanceMeters")?.Value?.Trim();
+                    if (!string.IsNullOrWhiteSpace(dstr)) _ = double.TryParse(dstr, out dist);
+
+                    if (!string.IsNullOrWhiteSpace(code) || !string.IsNullOrWhiteSpace(name))
+                        list.Add(new StopOption(code ?? "", name, dist));
+                }
+            }
+        }
+        return list;
+    }
+
+    private static List<string> ParseScheduledRoutes(JsonElement root)
+    {
+        var routes = new List<string>();
+
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("xml", out var xmlNode))
+        {
+            var xml = xmlNode.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(xml))
+            {
+                var x = XDocument.Parse(xml);
+                routes.AddRange(x.Descendants("ScheduledRoutes")
+                                 .Select(e => e.Element("RouteShortName")?.Value?.Trim())
+                                 .Where(s => !string.IsNullOrWhiteSpace(s))!);
+            }
+            return routes.Distinct(StringComparer.OrdinalIgnoreCase)
+                         .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                         .ToList();
+        }
+
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in root.EnumerateArray())
+            {
+                foreach (var p in row.EnumerateObject())
+                {
+                    if (p.Name.Equals("RouteShortName", StringComparison.OrdinalIgnoreCase)
+                        && p.Value.ValueKind == JsonValueKind.String)
+                    {
+                        var s = p.Value.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) routes.Add(s.Trim());
+                    }
+                }
+            }
+        }
+
+        return routes.Distinct(StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                     .ToList();
+    }
+
+    private static List<DateTime> ParseNextDeparturesTimes(JsonElement root)
+    {
+        var times = new List<DateTime>();
+
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("xml", out var xmlNode))
+        {
+            var xml = xmlNode.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(xml))
+            {
+                var x = XDocument.Parse(xml);
+                foreach (var n in x.Descendants("NextDepartures"))
+                {
+                    if (TryParseTime(n.Element("AdjustedDepartureTime")?.Value?.Trim(), out var t))
+                        times.Add(t);
+                    else if (TryParseTime(n.Element("ScheduledDepartureTime")?.Value?.Trim(), out var t2))
+                        times.Add(t2);
+                }
+            }
+            return times.OrderBy(t => t).ToList();
+        }
+
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in root.EnumerateArray())
+            {
+                foreach (var p in row.EnumerateObject())
+                {
+                    if (p.Value.ValueKind == JsonValueKind.String &&
+                        (p.Name.Contains("AdjustedDepartureTime", StringComparison.OrdinalIgnoreCase) ||
+                         p.Name.Contains("ScheduledDepartureTime", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var s = p.Value.GetString();
+                        if (TryParseTime(s, out var t)) times.Add(t);
+                    }
+                }
+            }
+        }
+
+        return times.OrderBy(t => t).ToList();
+    }
+
+    private static List<RouteTrip> ParseRouteTrips(JsonElement root, string routeShortName)
+    {
+        var trips = new List<RouteTrip>();
+
+        static void AddStop(Dictionary<string, List<TripStop>> map, string tripId, TripStop stop)
+        {
+            if (!map.TryGetValue(tripId, out var list))
+            {
+                list = new List<TripStop>();
+                map[tripId] = list;
+            }
+            list.Add(stop);
+        }
+
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("xml", out var xmlNode))
+        {
+            var xml = xmlNode.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(xml))
+            {
+                var x = XDocument.Parse(xml);
+                var byTrip = new Dictionary<string, List<TripStop>>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var n in x.Descendants())
+                {
+                    var stop = n.Element("StopCode")?.Value?.Trim() ?? n.Element("Code")?.Value?.Trim();
+                    if (string.IsNullOrWhiteSpace(stop)) continue;
+
+                    var tripId = n.Element("TripID")?.Value?.Trim();
+                    DateTime? sA = null, sD = null, cA = null, cD = null;
+
+                    if (TryParseTime(n.Element("ScheduledArrivalTime")?.Value?.Trim(), out var t1)) sA = t1;
+                    if (TryParseTime(n.Element("ScheduledDepartureTime")?.Value?.Trim(), out var t2)) sD = t2;
+                    if (TryParseTime(n.Element("CalculatedArrivalTime")?.Value?.Trim(), out var t3)) cA = t3;
+                    if (TryParseTime(n.Element("CalculatedDepartureTime")?.Value?.Trim(), out var t4)) cD = t4;
+
+                    if (!(sA.HasValue || sD.HasValue || cA.HasValue || cD.HasValue)) continue;
+
+                    if (!string.IsNullOrWhiteSpace(tripId))
+                        AddStop(byTrip, tripId!, new TripStop(stop, sA, sD, cA, cD));
+                }
+
+                if (byTrip.Count > 0)
+                {
+                    foreach (var kvp in byTrip)
+                    {
+                        var stops = kvp.Value
+                            .OrderBy(s => s.CalcDep ?? s.SchedDep ?? s.CalcArr ?? s.SchedArr ?? DateTime.MaxValue)
+                            .ToList();
+                        if (stops.Count > 0)
+                            trips.Add(new RouteTrip(routeShortName, stops));
+                    }
+                    return trips;
+                }
+
+                // Fallback grouping by blocks with StopCode
+                var blocks = x.Descendants().Where(e => e.Elements("StopCode").Any());
+                foreach (var block in blocks)
+                {
+                    var stops = new List<TripStop>();
+                    foreach (var n2 in block.Descendants())
+                    {
+                        var stop = n2.Element("StopCode")?.Value?.Trim() ?? n2.Element("Code")?.Value?.Trim();
+                        if (string.IsNullOrWhiteSpace(stop)) continue;
+
+                        DateTime? sA = null, sD = null, cA = null, cD = null;
+                        if (TryParseTime(n2.Element("ScheduledArrivalTime")?.Value?.Trim(), out var u1)) sA = u1;
+                        if (TryParseTime(n2.Element("ScheduledDepartureTime")?.Value?.Trim(), out var u2)) sD = u2;
+                        if (TryParseTime(n2.Element("CalculatedArrivalTime")?.Value?.Trim(), out var u3)) cA = u3;
+                        if (TryParseTime(n2.Element("CalculatedDepartureTime")?.Value?.Trim(), out var u4)) cD = u4;
+
+                        if (sA.HasValue || sD.HasValue || cA.HasValue || cD.HasValue)
+                            stops.Add(new TripStop(stop, sA, sD, cA, cD));
+                    }
+                    if (stops.Count > 0)
+                    {
+                        stops = stops.OrderBy(s => s.CalcDep ?? s.SchedDep ?? s.CalcArr ?? s.SchedArr ?? DateTime.MaxValue).ToList();
+                        trips.Add(new RouteTrip(routeShortName, stops));
+                    }
+                }
+            }
+        }
+        else if (root.ValueKind == JsonValueKind.Array)
+        {
+            var stops = new List<TripStop>();
+            foreach (var row in root.EnumerateArray())
+            {
+                string stop = "";
+                DateTime? sA = null, sD = null, cA = null, cD = null;
+                foreach (var p in row.EnumerateObject())
+                {
+                    if (p.Value.ValueKind == JsonValueKind.String)
+                    {
+                        var val = p.Value.GetString();
+                        if (p.Name.Equals("StopCode", StringComparison.OrdinalIgnoreCase) || p.Name.Equals("Code", StringComparison.OrdinalIgnoreCase))
+                            stop = val ?? "";
+                        else if (p.Name.Contains("ScheduledArrivalTime", StringComparison.OrdinalIgnoreCase) && TryParseTime(val, out var t1)) sA = t1;
+                        else if (p.Name.Contains("ScheduledDepartureTime", StringComparison.OrdinalIgnoreCase) && TryParseTime(val, out var t2)) sD = t2;
+                        else if (p.Name.Contains("CalculatedArrivalTime", StringComparison.OrdinalIgnoreCase) && TryParseTime(val, out var t3)) cA = t3;
+                        else if (p.Name.Contains("CalculatedDepartureTime", StringComparison.OrdinalIgnoreCase) && TryParseTime(val, out var t4)) cD = t4;
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(stop))
+                    stops.Add(new TripStop(stop, sA, sD, cA, cD));
+            }
+            if (stops.Count > 0)
+                trips.Add(new RouteTrip(routeShortName, stops.OrderBy(s => s.CalcDep ?? s.SchedDep ?? s.CalcArr ?? s.SchedArr ?? DateTime.MaxValue).ToList()));
+        }
+
+        return trips;
+    }
+
+    private static string? ParseStopNameFromScheduledStopInfo(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("xml", out var xmlProp))
+        {
+            var xml = xmlProp.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(xml))
+            {
+                var x = XDocument.Parse(xml);
+                var name = x.Descendants("StopName").Select(e => e.Value?.Trim()).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
+                        ?? x.Descendants("Name").Select(e => e.Value?.Trim()).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
+                        ?? x.Descendants("Description").Select(e => e.Value?.Trim()).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+                return name;
+            }
+        }
+
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var row in root.EnumerateArray())
+            {
+                foreach (var p in row.EnumerateObject())
+                {
+                    if (p.Value.ValueKind == JsonValueKind.String &&
+                        (p.Name.Equals("StopName", StringComparison.OrdinalIgnoreCase) ||
+                         p.Name.Equals("Name", StringComparison.OrdinalIgnoreCase) ||
+                         p.Name.Equals("Description", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        var s = p.Value.GetString();
+                        if (!string.IsNullOrWhiteSpace(s)) return s.Trim();
+                    }
+                }
+            }
+        }
+        else if (root.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var p in root.EnumerateObject())
+            {
+                if (p.Value.ValueKind == JsonValueKind.String &&
+                    (p.Name.Equals("StopName", StringComparison.OrdinalIgnoreCase) ||
+                     p.Name.Equals("Name", StringComparison.OrdinalIgnoreCase) ||
+                     p.Name.Equals("Description", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var s = p.Value.GetString();
+                    if (!string.IsNullOrWhiteSpace(s)) return s.Trim();
+                }
+            }
+        }
+        return null;
+    }
+
+    // ---------- UTILS ----------
+    private static bool TryParseTime(string? s, out DateTime dt)
+    {
+        dt = default;
+        if (string.IsNullOrWhiteSpace(s)) return false;
+
+        if (DateTimeOffset.TryParseExact(
+                s.Trim(),
+                "yyyy-MM-dd'T'HH:mm:sszzz",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out var dto))
+        {
+            dt = dto.LocalDateTime;
+            return true;
+        }
+        return false;
+    }
+
+    private sealed class GeoPosition { public double lat { get; set; } public double lon { get; set; } public double? accuracy { get; set; } }
+}
