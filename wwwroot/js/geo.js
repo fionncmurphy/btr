@@ -1,8 +1,5 @@
 ﻿export async function getPosition(
     options =
-        // enableHighAccuracy: true,
-        // timeout: 10000,
-        // maximumAge: 0,
         undefined
 ){
 
