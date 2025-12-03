@@ -7,24 +7,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="Properties\launchSettings.json" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="wwwroot\css\app.css" />
-    <None Include="wwwroot\css\bootstrap\bootstrap.min.css" />
-    <None Include="wwwroot\css\bootstrap\bootstrap.min.css.map" />
-    <None Include="wwwroot\favicon.png" />
-    <None Include="wwwroot\icon-192.png" />
-    <None Include="wwwroot\index.html" />
-    <None Include="wwwroot\js\geo.js" />
+    <Content Include="Implementation.md" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="8.0.15" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="8.0.15" PrivateAssets="all" />
     <PackageReference Include="MudBlazor" Version="8.13.0" />
-    <PackageReference Include="xunit" Version="2.9.3" />
   </ItemGroup>
 
 </Project>

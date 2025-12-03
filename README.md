@@ -22,4 +22,3 @@ For this project milestone, you will meet your project group and discuss the ite
 5. Provide your preliminary project idea (or set of ideas). This is not a commitment to a project.
 
 6. Team contract and AI policy
-t
