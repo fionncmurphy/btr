@@ -378,7 +378,7 @@ else
         _ => Color.Default
     };
 
-    private static List<(string Short, string Name, string RouteColor, string RouteTextColor)> ParseRoutes(JsonElement root)
+    <!-- private static List<(string Short, string Name, string RouteColor, string RouteTextColor)> ParseRoutes(JsonElement root)
     {
         var list = new List<(string, string, string, string)>();
 
@@ -401,7 +401,7 @@ else
             }
         }
         return list;
-    }
+    } -->
 
     private static string ParseFirstStopCode(JsonElement root)
     {
@@ -597,10 +597,9 @@ else
         }
     }
 
-    private static bool TryParseTime(string? s, out DateTime dt) => Services.DateParser.TryParseDate(s, out dt);
+    private static bool TryParseTime(string? s, out DateTime dt) => TryParseDate(s, out dt);
 
-    //moved to "Services/DateParser.cs"
-    /*private static bool TryParseDate(string? s, out DateTime dt)
+    private static bool TryParseDate(string? s, out DateTime dt)
     {
         dt = default;
         if (string.IsNullOrWhiteSpace(s)) return false;
@@ -616,7 +615,7 @@ else
             return true;
         }
         return false;
-    }*/
+    }
 
     private static List<DateTime> CleanupTimes(List<DateTime> times)
     {
