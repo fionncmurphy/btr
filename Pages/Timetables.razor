@@ -128,7 +128,7 @@ else
         {
             using var cts = new CancellationTokenSource(RequestTimeout);
             var routesRoot = await Http.GetFromJsonAsync<JsonElement>($"{WorkerBase}?method=GetCurrentRoutes", cts.Token);
-            var routes = ParseRoutes(routesRoot);
+            var routes = RouteParser.ParseRoutes(routesRoot);
 
             _rows.Clear();
 
