@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Set local time to EST
+      run: sudo timedatectl set-timezone America/New_York
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
