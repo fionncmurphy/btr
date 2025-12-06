@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Remove="wwwroot\js\geo.mjs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="Properties\launchSettings.json" />
   </ItemGroup>
 
@@ -17,7 +21,7 @@
     <None Include="wwwroot\favicon.png" />
     <None Include="wwwroot\icon-192.png" />
     <None Include="wwwroot\index.html" />
-    <None Include="wwwroot\js\geo.js" />
+    <None Include="wwwroot\js\geo.mjs" />
   </ItemGroup>
 
   <ItemGroup>
