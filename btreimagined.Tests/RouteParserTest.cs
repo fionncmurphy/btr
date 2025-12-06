@@ -55,14 +55,7 @@ public class RouteParserTests
         // Arrange: Build JSON structure containing your XML
         string json = """
         {
-            "xml": "<Root>
-                       <CurrentRoutes>
-                           <RouteName>Main Street</RouteName>
-                           <RouteShortName>MS</RouteShortName>
-                           <RouteColor>123456</RouteColor>
-                           <RouteTextColor>FFFFFF</RouteTextColor>
-                       </CurrentRoutes>
-                   </Root>"
+            "xml": "<Root><CurrentRoutes><RouteName>Main Street</RouteName><RouteShortName>MS</RouteShortName><RouteColor>123456</RouteColor><RouteTextColor>FFFFFF</RouteTextColor></CurrentRoutes></Root>"
         }
         """;
 
@@ -86,11 +79,7 @@ public class RouteParserTests
         // Arrange: shortName exists but name missing
         string json = """
         {
-            "xml": "<Root>
-                       <CurrentRoutes>
-                           <RouteShortName>MS</RouteShortName>
-                       </CurrentRoutes>
-                   </Root>"
+            "xml": "<Root><CurrentRoutes><RouteShortName>MS</RouteShortName></CurrentRoutes></Root>"
         }
         """;
 
