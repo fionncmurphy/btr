@@ -20,11 +20,12 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
-    - name: Navigate to test project
-      run: cd btreimagined.Tests
     - name: Restore dependencies
       run: dotnet restore
+      working-directory: btreimagined.Tests
     - name: Build
       run: dotnet build --no-restore
+      working-directory: btreimagined.Tests
     - name: Test
       run: dotnet test --no-build --verbosity normal
+      working-directory: btreimagined.Tests
