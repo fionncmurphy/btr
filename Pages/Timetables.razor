@@ -3,6 +3,7 @@
 @using System.Net.Http.Json
 @using System.Text.Json
 @using System.Xml.Linq
+@using btreimagined.Services
 @inject HttpClient Http
 
 <PageTitle>Bus Routes</PageTitle>
@@ -91,9 +92,9 @@ else
 @code {
     // ---------- CONFIG ----------
     private const string WorkerBase = "https://blue-disk-457f.fionncmurphy.workers.dev/api/bt4u";
-    private const int MaxTrips = 100;
-    private const int MaxParallel = 6;
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(8);
+    private const int MaxTrips = 50;
+    private const int MaxParallel = 10;
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
     private static readonly string ServiceDateIso = DateTime.Today.ToString("yyyy-MM-dd");
 
     // ---------- MODEL ----------
@@ -128,7 +129,7 @@ else
         {
             using var cts = new CancellationTokenSource(RequestTimeout);
             var routesRoot = await Http.GetFromJsonAsync<JsonElement>($"{WorkerBase}?method=GetCurrentRoutes", cts.Token);
-            var routes = ParseRoutes(routesRoot);
+            var routes = RouteParser.ParseRoutes(routesRoot);
 
             _rows.Clear();
 
@@ -378,30 +379,30 @@ else
         _ => Color.Default
     };
 
-    private static List<(string Short, string Name, string RouteColor, string RouteTextColor)> ParseRoutes(JsonElement root)
-    {
-        var list = new List<(string, string, string, string)>();
+    //private static List<(string Short, string Name, string RouteColor, string RouteTextColor)> ParseRoutes(JsonElement root)
+    //{
+        //var list = new List<(string, string, string, string)>();
 
-        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("xml", out var xmlNode))
-        {
-            var xml = xmlNode.GetString() ?? "";
-            if (!string.IsNullOrWhiteSpace(xml))
-            {
-                var doc = XDocument.Parse(xml);
-                foreach (var e in doc.Descendants("CurrentRoutes"))
-                {
-                    var name = e.Element("RouteName")?.Value?.Trim() ?? "";
-                    var shortName = e.Element("RouteShortName")?.Value?.Trim() ?? "";
-                    var color = e.Element("RouteColor")?.Value?.Trim() ?? "888888";
-                    var text = e.Element("RouteTextColor")?.Value?.Trim() ?? "FFFFFF";
+        //if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("xml", out var xmlNode))
+        //{
+            //var xml = xmlNode.GetString() ?? "";
+            //if (!string.IsNullOrWhiteSpace(xml))
+            //{
+                //var doc = XDocument.Parse(xml);
+                //foreach (var e in doc.Descendants("CurrentRoutes"))
+                //{
+                    //var name = e.Element("RouteName")?.Value?.Trim() ?? "";
+                    //var shortName = e.Element("RouteShortName")?.Value?.Trim() ?? "";
+                    //var color = e.Element("RouteColor")?.Value?.Trim() ?? "888888";
+                    //var text = e.Element("RouteTextColor")?.Value?.Trim() ?? "FFFFFF";
 
-                    if (!string.IsNullOrWhiteSpace(shortName) && !string.IsNullOrWhiteSpace(name))
-                        list.Add((shortName, name, color, text));
-                }
-            }
-        }
-        return list;
-    }
+                    //if (!string.IsNullOrWhiteSpace(shortName) && !string.IsNullOrWhiteSpace(name))
+                        //list.Add((shortName, name, color, text));
+                //}
+            //}
+        //}
+        //return list;
+    //}
 
     private static string ParseFirstStopCode(JsonElement root)
     {
