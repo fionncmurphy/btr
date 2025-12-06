@@ -598,9 +598,9 @@ else
         }
     }
 
-    private static bool TryParseTime(string? s, out DateTime dt) => TryParseDate(s, out dt);
+    private static bool TryParseTime(string? s, out DateTime dt) => DateParser.TryParseDate(s, out dt);
 
-    private static bool TryParseDate(string? s, out DateTime dt)
+    /*private static bool TryParseDate(string? s, out DateTime dt)
     {
         dt = default;
         if (string.IsNullOrWhiteSpace(s)) return false;
@@ -616,7 +616,7 @@ else
             return true;
         }
         return false;
-    }
+    }*/
 
     private static List<DateTime> CleanupTimes(List<DateTime> times)
     {
